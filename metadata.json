@@ -1,0 +1,8 @@
+{
+  "name": "LinguaLens",
+  "description": "Business-grade Chinese language learning assistant with real-time AI tutoring.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
