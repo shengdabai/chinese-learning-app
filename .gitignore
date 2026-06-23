@@ -25,6 +25,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
 # Codex governance: local secrets and machine state
 .env
 .env.*
@@ -37,6 +38,19 @@ id_rsa
 id_dsa
 .npmrc
 .DS_Store
+
+# AI tool artifacts
 .omc/
 .codex/
 .claude/local/
+*-todo.md
+*.pipeline-state.json
+.state.json
+state*.json
+opc-doc/
+
+# AI conversation notes (dev-internal, not for public repo)
+claude*.md
+codex*.md
+gemini*.md
+中文学习网页技术文档.md

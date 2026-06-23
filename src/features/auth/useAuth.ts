@@ -163,7 +163,7 @@ export function useAuth(): UseAuthReturn {
       return { success: false, error: 'Username must be at least 3 characters.' };
     }
 
-    if (password.length < 4) {
+    if (password.length < 8) {
       return { success: false, error: 'Password must be at least 4 characters.' };
     }
 
