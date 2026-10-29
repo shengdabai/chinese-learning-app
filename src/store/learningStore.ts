@@ -50,6 +50,14 @@ export class LearningStore {
         }
     }
 
+    static clearRecovery(): void {
+        try {
+            localStorage.removeItem(`${STORAGE_KEY}_recovery`);
+        } catch {
+            console.error('Failed to clear profile recovery copy.');
+        }
+    }
+
     static resetProfile(): UserProfile {
         LearningStore.saveProfile(DEFAULT_PROFILE);
         return structuredClone(DEFAULT_PROFILE);

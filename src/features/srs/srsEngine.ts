@@ -158,6 +158,14 @@ export function saveSRSCards(cards: readonly SRSCard[]): void {
   }
 }
 
+export function clearSRSRecovery(): void {
+  try {
+    localStorage.removeItem(`${SRS_STORAGE_KEY}_recovery`);
+  } catch {
+    console.error('Failed to clear SRS recovery copy.');
+  }
+}
+
 /**
  * Add a card if the word doesn't already exist.
  * Returns a new array (immutable).

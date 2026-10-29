@@ -5,7 +5,7 @@ import ts from 'typescript';
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve; const promise = new Promise(r => resolve = r); return { promise, resolve }; };
 const load = (path, require = () => ({}), globals = {}) => {
-  const source = readFileSync(new URL(path, import.meta.url), 'utf8').replaceAll('import.meta.env.VITE_GEMINI_API_KEY', '"fixture"');
+  const source = readFileSync(new URL(path, import.meta.url), 'utf8');
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
   const exports = {};
   new Function('exports', 'require', ...Object.keys(globals), code)(exports, require, ...Object.values(globals));
@@ -85,4 +85,66 @@ for (const [path, key, save, value] of [
   const write = save(load(path, undefined, { localStorage: storage })); write(value); write(value);
   assert.equal(data.get(`${key}_recovery`), '{"invalid":"fixture"}');
   assert.equal(data.get(key), JSON.stringify(value));
+});
+
+function mountAuth(storage) {
+  let state;
+  const react = {
+    useState(initial) { state = initial; return [state, value => { state = value; }]; },
+    useCallback: fn => fn, useEffect: fn => fn(),
+  };
+  const globals = { localStorage: storage };
+  const { useAuth } = load('../src/features/auth/useAuth.ts', name => {
+    if (name === 'react') return react;
+    if (name.endsWith('/srsEngine')) return load('../src/features/srs/srsEngine.ts', undefined, globals);
+    if (name.endsWith('/learningStore')) return load('../src/store/learningStore.ts', undefined, globals);
+    throw new Error(`Unexpected auth dependency: ${name}`);
+  }, globals);
+  return { auth: useAuth(), get state() { return state; } };
+}
+test('logout clears both recovery copies, preserves learning data and allows a fresh backup', () => {
+  const keys = ['lingualens_srs_cards', 'lingualens_user_profile'];
+  const data = new Map([
+    ['lingualens_auth', JSON.stringify({ username: 'fixture', createdAt: 0 })],
+    ['lingualens_users', 'fixture account records'], ['unrelated', 'fixture preference'],
+    ...keys.flatMap(key => [[key, 'fixture current data'], [`${key}_recovery`, 'fixture old backup']]),
+  ]);
+  const storage = { getItem: k => data.get(k) ?? null, setItem: (k, v) => data.set(k, v), removeItem: k => data.delete(k) };
+  const app = mountAuth(storage);
+  app.auth.logout();
+  assert.equal(data.has('lingualens_auth'), false);
+  assert.deepEqual(app.state, { user: null, isLoading: false });
+  for (const key of keys) {
+    assert.equal(data.has(`${key}_recovery`), false, `${key} recovery must be removed`);
+    assert.equal(data.get(key), 'fixture current data');
+  }
+  assert.equal(data.get('lingualens_users'), 'fixture account records');
+  assert.equal(data.get('unrelated'), 'fixture preference');
+  const globals = { localStorage: storage };
+  load('../src/features/srs/srsEngine.ts', undefined, globals).saveSRSCards([]);
+  load('../src/store/learningStore.ts', undefined, globals).LearningStore.saveProfile({ quests: [] });
+  for (const key of keys) assert.equal(data.get(`${key}_recovery`), 'fixture current data');
+});
+test('logout without recovery copies remains safe and repeatable', () => {
+  const data = new Map();
+  const storage = { getItem: k => data.get(k) ?? null, removeItem: k => data.delete(k) };
+  const app = mountAuth(storage);
+  app.auth.logout(); app.auth.logout();
+  assert.equal(data.size, 0);
+  assert.deepEqual(app.state, { user: null, isLoading: false });
+});
+test('a recovery removal failure does not stop logout or the other recovery cleanup', () => {
+  const data = new Map([['lingualens_auth', '{}'], ['lingualens_user_profile_recovery', 'fixture backup']]);
+  const storage = {
+    getItem: k => data.get(k) ?? null,
+    removeItem(k) {
+      if (k === 'lingualens_srs_cards_recovery') throw new Error('fixture storage unavailable');
+      data.delete(k);
+    },
+  };
+  const app = mountAuth(storage);
+  app.auth.logout();
+  assert.equal(data.has('lingualens_auth'), false);
+  assert.equal(data.has('lingualens_user_profile_recovery'), false);
+  assert.deepEqual(app.state, { user: null, isLoading: false });
 });

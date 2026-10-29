@@ -11,10 +11,24 @@ export function isAnalysisResult(value: unknown): value is AnalysisResult {
 }
 
 async function post(path: string, body: object, signal?: AbortSignal) {
-    const response = await fetch(`/api/gemini/${path}`, { method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
-    if (!response.ok) throw new Error('AI service unavailable. Please try again.');
-    return response.json();
+    if (signal?.aborted) throw signal.reason;
+    const controller = new AbortController();
+    const cancel = () => controller.abort(signal?.reason);
+    signal?.addEventListener('abort', cancel, { once: true });
+    const timeoutError = new Error('AI service request timed out. Please try again.');
+    const timer = setTimeout(() => controller.abort(timeoutError), 30_000);
+    try {
+        const response = await fetch(`/api/gemini/${path}`, { method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: controller.signal });
+        if (!response.ok) throw new Error('AI service unavailable. Please try again.');
+        return await response.json();
+    } catch (error) {
+        if (controller.signal.reason === timeoutError) throw timeoutError;
+        throw error;
+    } finally {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', cancel);
+    }
 }
 export async function analyzePhoto(image: string, signal?: AbortSignal): Promise<AnalysisResult> {
     const result = await post('snap', { image }, signal);
