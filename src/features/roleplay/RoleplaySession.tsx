@@ -5,6 +5,7 @@ import { MODEL_LIVE } from '../../config/constants';
 import { arrayBufferToBase64, base64ToFloat32Array, float32ToPCM16 } from '../../utils/audio';
 import { Scenario } from './scenarios';
 import { Loader2 } from 'lucide-react';
+import { MediaSessionResources } from '../../utils/mediaSession';
 
 interface RoleplaySessionProps {
     scenario: Scenario;
@@ -13,6 +14,7 @@ interface RoleplaySessionProps {
 
 export const RoleplaySession: React.FC<RoleplaySessionProps> = ({ scenario, onExit }) => {
     const [connected, setConnected] = useState(false);
+    const resourcesRef = useRef<MediaSessionResources | null>(null);
     const [micActive, setMicActive] = useState(false);
     const micActiveRef = useRef(false);
     const [status, setStatus] = useState<string>("Initializing...");
@@ -24,29 +26,39 @@ export const RoleplaySession: React.FC<RoleplaySessionProps> = ({ scenario, onEx
 
     useEffect(() => {
         connect();
-        return () => disconnect();
+        return () => {
+            resourcesRef.current?.dispose();
+            resourcesRef.current = null;
+        };
     }, []);
 
     const connect = async () => {
+        if (resourcesRef.current?.active) return;
+        const resources = new MediaSessionResources();
+        resourcesRef.current = resources;
+        nextStartTimeRef.current = 0;
         try {
             setStatus("Requesting microphone...");
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const stream = resources.trackStream(await navigator.mediaDevices.getUserMedia({ audio: true }));
+            if (!resources.active) return;
             streamRef.current = stream;
 
             const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
             audioContextRef.current = audioCtx;
+            resources.addCleanup(() => audioCtx.close());
 
             // NOTE: In production, API calls should be proxied through a backend server
             // to avoid exposing the API key in client-side code.
             const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
             if (!apiKey) {
+                disconnect();
                 setStatus("Error: API key not configured. Set VITE_GEMINI_API_KEY in .env.local.");
                 return;
             }
             const ai = new GoogleGenAI({ apiKey });
             setStatus("Connecting to AI Persona...");
 
-            const sessionPromise = ai.live.connect({
+            const sessionPromise = resources.trackSession(ai.live.connect({
                 model: MODEL_LIVE,
                 config: {
                     responseModalities: [Modality.AUDIO],
@@ -57,6 +69,7 @@ export const RoleplaySession: React.FC<RoleplaySessionProps> = ({ scenario, onEx
                 },
                 callbacks: {
                     onopen: () => {
+                        if (!resources.active) return;
                         setConnected(true);
                         setMicActive(true);
                         micActiveRef.current = true;
@@ -68,30 +81,38 @@ export const RoleplaySession: React.FC<RoleplaySessionProps> = ({ scenario, onEx
                         // Start Audio Streaming
                         const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
                         inputAudioContextRef.current = inputCtx;
+                        resources.addCleanup(() => inputCtx.close());
                         const source = inputCtx.createMediaStreamSource(stream);
                         const processor = inputCtx.createScriptProcessor(4096, 1, 1);
                         scriptProcessorRef.current = processor;
+                        resources.addCleanup(() => {
+                            processor.onaudioprocess = null;
+                            processor.disconnect();
+                            source.disconnect();
+                        });
 
                         processor.onaudioprocess = (e) => {
-                            if (!micActiveRef.current) return;
+                            if (!resources.active || !micActiveRef.current) return;
                             const inputData = e.inputBuffer.getChannelData(0);
                             const pcm16 = float32ToPCM16(inputData);
                             const base64 = arrayBufferToBase64(pcm16.buffer as ArrayBuffer);
 
                             sessionPromise.then(session => {
+                                if (!resources.active || !micActiveRef.current) return;
                                 session.sendRealtimeInput({
                                     audio: {
                                         mimeType: "audio/pcm;rate=16000",
                                         data: base64
                                     }
                                 });
-                            });
+                            }).catch(() => {});
                         };
 
                         source.connect(processor);
                         processor.connect(inputCtx.destination);
                     },
                     onmessage: async (msg: LiveServerMessage) => {
+                        if (!resources.active) return;
                         const audioData = msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
                         if (audioData && audioContextRef.current) {
                             const ctx = audioContextRef.current;
@@ -112,39 +133,38 @@ export const RoleplaySession: React.FC<RoleplaySessionProps> = ({ scenario, onEx
                         }
                     },
                     onclose: () => {
-                        setConnected(false);
+                        if (!resources.active) return;
+                        disconnect();
                         setStatus("Disconnected");
                     },
                     onerror: (err) => {
+                        if (!resources.active) return;
                         console.error(err);
+                        disconnect();
                         setStatus("Connection Error");
                     }
                 }
-            });
+            }));
+            await sessionPromise;
 
         } catch (e) {
+            if (!resources.active) return;
+            disconnect();
             const message = e instanceof Error ? e.message : 'Unknown error';
             setStatus(`Failed to start session: ${message}`);
         }
     };
 
     const disconnect = () => {
-        if (scriptProcessorRef.current) {
-            scriptProcessorRef.current.disconnect();
-            scriptProcessorRef.current = null;
-        }
-        if (inputAudioContextRef.current) {
-            inputAudioContextRef.current.close();
-            inputAudioContextRef.current = null;
-        }
-        if (audioContextRef.current) {
-            audioContextRef.current.close();
-            audioContextRef.current = null;
-        }
-        if (streamRef.current) {
-            streamRef.current.getTracks().forEach(t => t.stop());
-            streamRef.current = null;
-        }
+        resourcesRef.current?.dispose();
+        resourcesRef.current = null;
+        scriptProcessorRef.current = null;
+        inputAudioContextRef.current = null;
+        audioContextRef.current = null;
+        streamRef.current = null;
+        nextStartTimeRef.current = 0;
+        micActiveRef.current = false;
+        setMicActive(false);
         setConnected(false);
     };
 
@@ -193,6 +213,7 @@ export const RoleplaySession: React.FC<RoleplaySessionProps> = ({ scenario, onEx
                     </div>
                     <button
                         onClick={onExit}
+                        aria-label="Exit roleplay"
                         className="p-2 hover:bg-white/10 rounded-full text-slate-400 hover:text-white transition-colors"
                     >
                         <ArrowLeft size={20} />
@@ -240,6 +261,8 @@ export const RoleplaySession: React.FC<RoleplaySessionProps> = ({ scenario, onEx
                 <div className="p-8 pb-12 flex justify-center items-center gap-8">
                     <button
                         onClick={toggleMic}
+                        aria-label={micActive ? "Mute microphone" : "Unmute microphone"}
+                        aria-pressed={micActive}
                         className={`p-6 rounded-full transition-all duration-200 active:scale-95 shadow-xl ${micActive ? 'bg-white text-slate-900 hover:bg-slate-200' : 'bg-red-500/20 text-red-500 ring-1 ring-red-500/30'}`}
                     >
                         {micActive ? <Mic size={32} /> : <div className="relative"><Mic size={32} /><div className="absolute inset-0 border-t-2 border-red-500 rotate-45 top-1/2 left-0 w-full" /></div>}
@@ -247,6 +270,7 @@ export const RoleplaySession: React.FC<RoleplaySessionProps> = ({ scenario, onEx
 
                     <button
                         onClick={onExit}
+                        aria-label="Exit roleplay"
                         className="p-6 rounded-full bg-red-600 text-white hover:bg-red-500 transition-all shadow-lg shadow-red-600/30 active:scale-95"
                     >
                         <Square size={32} fill="currentColor" />
