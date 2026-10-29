@@ -83,10 +83,11 @@ function mount(mode, { key = 'fake-test-key' } = {}) {
   };
   const file = mode === 'live' ? 'LiveMode' : 'RoleplaySession';
   const path = new URL(`../src/features/${mode === 'live' ? 'live' : 'roleplay'}/${file}.tsx`, import.meta.url);
-  const source = readFileSync(path, 'utf8').replaceAll('import.meta.env.VITE_GEMINI_API_KEY', JSON.stringify(key));
+  const source = readFileSync(path, 'utf8');
   const module = { exports: {} };
   const require = name => {
     if (name === 'react') return { ...react, default: react };
+    if (name.endsWith('/gemini')) return { createLiveClient: async () => { if (!key) throw new Error('service unavailable'); return new GoogleGenAI(); } };
     if (name === '@google/genai') return { GoogleGenAI, Modality: { AUDIO: 'AUDIO' } };
     if (name.endsWith('/mediaSession')) return helperModule.exports;
     if (name.endsWith('/audio')) return { float32ToPCM16: () => new Uint8Array(2), arrayBufferToBase64: () => 'audio' };
@@ -167,7 +168,7 @@ for (const mode of ['live', 'roleplay']) {
     app.unmount();
   });
 
-  test(`${mode}: missing key releases hardware without SDK calls`, async () => {
+  test(`${mode}: token issuance failure releases hardware without SDK calls`, async () => {
     const app = mount(mode, { key: '' });
     if (mode === 'live') void app.click('Start Session');
     app.permission.resolve(app.stream);

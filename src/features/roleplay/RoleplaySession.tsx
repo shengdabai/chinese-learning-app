@@ -1,5 +1,6 @@
+import { createLiveClient } from '../../services/gemini';
 import React, { useState, useRef, useEffect } from 'react';
-import { GoogleGenAI, LiveServerMessage, Modality } from "@google/genai";
+import { LiveServerMessage, Modality } from "@google/genai";
 import { Mic, Square, ArrowLeft } from 'lucide-react';
 import { MODEL_LIVE } from '../../config/constants';
 import { arrayBufferToBase64, base64ToFloat32Array, float32ToPCM16 } from '../../utils/audio';
@@ -47,15 +48,8 @@ export const RoleplaySession: React.FC<RoleplaySessionProps> = ({ scenario, onEx
             audioContextRef.current = audioCtx;
             resources.addCleanup(() => audioCtx.close());
 
-            // NOTE: In production, API calls should be proxied through a backend server
-            // to avoid exposing the API key in client-side code.
-            const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-            if (!apiKey) {
-                disconnect();
-                setStatus("Error: API key not configured. Set VITE_GEMINI_API_KEY in .env.local.");
-                return;
-            }
-            const ai = new GoogleGenAI({ apiKey });
+            const ai = await createLiveClient();
+            if (!resources.active) return;
             setStatus("Connecting to AI Persona...");
 
             const sessionPromise = resources.trackSession(ai.live.connect({
@@ -139,7 +133,7 @@ export const RoleplaySession: React.FC<RoleplaySessionProps> = ({ scenario, onEx
                     },
                     onerror: (err) => {
                         if (!resources.active) return;
-                        console.error(err);
+                        console.error("Live session connection error");
                         disconnect();
                         setStatus("Connection Error");
                     }
@@ -183,7 +177,7 @@ export const RoleplaySession: React.FC<RoleplaySessionProps> = ({ scenario, onEx
         const interval = setInterval(() => {
             const tips = [
                 "Tip: Try using '请问' (May I ask) for politeness.",
-                "Great pronunciation on that last phrase!",
+                "Practice tip: Speak slowly and clearly.",
                 "Don't forget to specify hot or cold drinks.",
                 "You can ask '多少钱' (How much is it?) if unsure."
             ];

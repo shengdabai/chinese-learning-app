@@ -27,7 +27,7 @@ This repository supports productized learning workflows: diagnostic input, guide
 - **Visibility:** `PUBLIC`
 - **License:** MIT License
 
-> **Security notice:** Because this is a pure client-side app, your Gemini API key is embedded in the browser bundle at build time and is visible to anyone who inspects the page. **Run this app only for personal/local use, or behind a private URL.** Do not deploy it publicly with a shared API key. For a production deployment, proxy Gemini calls through a server-side function (e.g. Cloudflare Worker or Vercel Edge Function) so the key never reaches the client.
+> **API boundary:** Snap uses a same-origin server proxy. Live and Roleplay receive single-use, short-lived Gemini tokens; the permanent key stays on the server. The included Vite API is restricted to local development. A public deployment still needs server-verified authentication and per-user quotas.
 
 ## ✨ Features
 
@@ -57,7 +57,7 @@ npm run preview
 
 Use Node.js `^20.19.0 || >=22.12.0`, as required by the locked Vite React plugin. Preview serves an existing build; run `npm run build` first.
 
-> ⚠️ The Gemini key is bundled into the client at build time. For anything beyond local/personal use, proxy Gemini calls through your own backend instead of shipping the key to the browser.
+> Gemini features require a backend. Set `GEMINI_API_KEY` in the server process environment before starting development; Vite does not load environment files. Never use a `VITE_` variable for credentials.
 
 ## 📖 Usage
 
@@ -69,7 +69,7 @@ Use Node.js `^20.19.0 || >=22.12.0`, as required by the locked Vite React plugin
 
 ## 🗺️ Status
 
-Active, in-public project. Core modes (Snap, Live, Roleplay, SRS, Quests/Profile) are working. It's a fully client-side build with local persistence; a key proxy and richer content are natural next steps. Issues and ideas are welcome.
+Active, in-public project. Core modes (Snap, Live, Roleplay, SRS, Quests/Profile) are working. Learning data persists locally. The development API proxies image analysis and issues Live tokens; production authentication and richer content remain pending. Issues and ideas are welcome.
 
 ## 🤝 Connect / About
 
@@ -107,7 +107,7 @@ LinguaLens 把手机镜头和麦克风变成一位中文老师。对任何东西
 
 ## 它能做什么
 
-LinguaLens 是一个纯前端 React 应用。你只需提供一个 Google Gemini API Key，一切都在浏览器里运行。
+LinguaLens 使用 React 界面和本地学习存储。图片识别通过服务端调用 Gemini；实时会话使用服务端发放的短期令牌，长期密钥不进入浏览器。
 
 ## ✨ 功能
 
@@ -124,7 +124,7 @@ LinguaLens 是一个纯前端 React 应用。你只需提供一个 Google Gemini
 - **Vite 6** 构建工具
 - **Google GenAI**（`@google/genai`）—— 视觉用 `gemini-2.5-flash`，实时语音用 `gemini-2.5-flash-native-audio-preview`
 - **Tailwind CSS**（CDN 引入）+ **lucide-react** 图标
-- **Web Audio API** 处理实时音频，**React 状态 + 本地存储** 做持久化（无服务器）
+- **Web Audio API** 处理实时音频，**React 状态 + 本地存储** 做持久化（AI 调用经服务端）
 
 ## 🚀 快速开始
 
@@ -138,10 +138,8 @@ cd chinese-learning-app
 # 2. 安装依赖
 npm ci
 
-# 3. 配置 API Key
-cp .env.example .env.local
-# 然后编辑 .env.local，设置：
-#   VITE_GEMINI_API_KEY=your_api_key_here
+# 3. 从你的密钥管理器向服务端进程环境提供 GEMINI_API_KEY
+# 不使用 VITE_ 前缀；应用不自动读取 .env 文件
 
 # 4. 启动（开发服务器：http://localhost:3000）
 npm run dev
@@ -170,9 +168,19 @@ npm test
 npm run build
 ```
 
-Tests use fake media tracks, audio contexts and Gemini sessions. They cover exit/error cleanup, late permission/connection results, repeated starts, and paused video/audio sending. They do not request devices or call paid APIs. The component harness checks event wiring and lifecycle; it does not replace React DOM or browser tests.
+Tests use fake media tracks, audio contexts, local storage and Gemini clients. They cover exit/error cleanup, late permission/connection results, repeated starts, and paused video/audio sending. They do not request devices or call paid APIs. The component harness checks event wiring and lifecycle; it does not replace React DOM or browser tests.
 
-Before accepting a release, check desktop and mobile layouts in a real browser. In Live and Roleplay, verify permission denial, missing API key, connection failure, exit while connecting, and ending an active session. Confirm that camera/microphone indicators stop after exit, Live video pause stops frames, and resume restores video. Live Gemini validation requires separate authorization and a configured key.
+Before accepting a release, check desktop and mobile layouts in a real browser. In Live and Roleplay, verify permission denial, token issuance failure, connection failure, exit while connecting, and ending an active session. Confirm that camera/microphone indicators stop after exit, Live video pause stops frames, and resume restores video. Live Gemini validation requires separate authorization and a configured server key.
+
+## Server Integration
+
+`npm run dev` mounts `/api/gemini/snap` and `/api/gemini/live-token` on `http://localhost:3000`. Requests must come from a loopback connection with that exact Host and Origin. Start the app at that URL. The server reads `GEMINI_API_KEY` only when an authorized request needs the SDK. No keys or tokens are persisted or logged by the handler.
+
+`npm run build` emits static frontend assets only. `npm run preview` does **not** run the API. For a public deployment, mount `createGeminiHandler` from `server/geminiApi.ts` behind the same origin and supply `getClient` and a server-verified `authorize` callback that enforces identity, origin/CSRF checks and per-user quotas. The handler denies all requests by default. The localStorage login is a local demo feature and must never authorize server requests. Do not reuse `authorizeLocalDev` for production.
+
+Snap accepts only bounded JPEG data and a fixed server prompt/model. Live tokens allow one connection, a 60-second connection window and a 10-minute lifetime, constrained to the existing audio model. This pinned SDK uses `v1alpha`; see [Google's ephemeral-token documentation](https://ai.google.dev/gemini-api/docs/live-api/ephemeral-tokens). Upstream compatibility has only been verified against local SDK types and mocks, not a paid call.
+
+Invalid saved SRS entries are excluded from the working list, and invalid profiles fall back to independent defaults. Before replacing either stored collection, the first previous raw value is retained under its `_recovery` key. Profile charts are labeled sample data; roleplay coaching tips are scripted, not pronunciation assessment. Local account data isolation remains pending.
 
 ## Operating Notes
 
